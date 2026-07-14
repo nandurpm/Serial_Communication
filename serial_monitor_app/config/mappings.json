@@ -1,0 +1,52 @@
+{
+  "mappings": [
+    {
+      "device_id": "device_1",
+      "address": 0,
+      "label": "Temperature (°C)",
+      "data_type": "int16",
+      "scale": 0.1,
+      "offset": -40.0,
+      "unit": "°C",
+      "description": "Process temperature reading",
+      "min_value": -40,
+      "max_value": 125,
+      "alarm_threshold": 100
+    },
+    {
+      "device_id": "device_1",
+      "address": 1,
+      "label": "Pressure (bar)",
+      "data_type": "uint16",
+      "scale": 0.01,
+      "offset": 0,
+      "unit": "bar",
+      "description": "System pressure",
+      "min_value": 0,
+      "max_value": 10,
+      "alarm_threshold": 9.5
+    },
+    {
+      "device_id": "device_1",
+      "address": 2,
+      "label": "Flow Rate (L/min)",
+      "data_type": "uint16",
+      "scale": 0.1,
+      "offset": 0,
+      "unit": "L/min",
+      "description": "Liquid flow measurement",
+      "min_value": 0,
+      "max_value": 100
+    },
+    {
+      "device_id": "device_1",
+      "address": 3,
+      "label": "Status Flags",
+      "data_type": "hex",
+      "scale": 1,
+      "offset": 0,
+      "unit": "",
+      "description": "Device status byte"
+    }
+  ]
+}

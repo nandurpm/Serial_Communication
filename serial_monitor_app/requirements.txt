@@ -1,0 +1,40 @@
+# Core dependencies
+pyserial==3.5
+modbus-tk==1.2.0
+
+# GUI
+Pillow==10.0.0
+
+# Data processing
+numpy==1.24.3
+pandas==2.0.3
+
+# Visualization
+matplotlib==3.7.2
+plotly==5.15.0
+
+# Web API
+Flask==2.3.2
+Flask-RESTful==0.3.9
+Flask-CORS==4.0.0
+
+# Database
+sqlalchemy==2.0.19
+psycopg2-binary==2.9.6
+
+# Configuration
+pydantic==2.0.2
+python-dotenv==1.0.0
+
+# Logging
+python-json-logger==2.0.7
+
+# Testing
+pytest==7.4.0
+pytest-cov==4.1.0
+pytest-asyncio==0.21.0
+
+# Code quality
+black==23.7.0
+flake8==6.0.0
+pylint==2.17.5
