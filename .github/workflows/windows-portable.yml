@@ -37,14 +37,17 @@ jobs:
             serial_monitor_app/requirements-build.txt
 
       - name: Install build dependencies
+        id: dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-build.txt
 
       - name: Run protocol tests
+        id: tests
         run: pytest -q
 
       - name: Build portable executable
+        id: build
         shell: pwsh
         run: |
           pyinstaller `
@@ -59,6 +62,7 @@ jobs:
             app_gui.py
 
       - name: Verify executable starts
+        id: smoke
         shell: pwsh
         run: |
           $exe = (Resolve-Path ".\dist\SerialCommunicationMonitor.exe").Path
@@ -71,6 +75,7 @@ jobs:
           Stop-Process -Id $process.Id -Force
 
       - name: Create portable ZIP
+        id: package
         shell: pwsh
         run: |
           $packageRoot = "package\SerialCommunicationMonitor-Windows-x64"
@@ -108,6 +113,7 @@ jobs:
             -Force
 
       - name: Upload workflow artifact
+        id: artifact
         uses: actions/upload-artifact@v4
         with:
           name: SerialCommunicationMonitor-Windows-x64
@@ -116,6 +122,7 @@ jobs:
           retention-days: 90
 
       - name: Publish rolling Windows release
+        id: release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -132,23 +139,44 @@ jobs:
             --notes "Ready-to-use Windows x64 portable build. Extract the ZIP and run SerialCommunicationMonitor.exe. Python is not required. This unsigned engineering utility must be tested with the intended serial converter and controller before field use." `
             --prerelease
 
-      - name: Record successful build on main
+      - name: Record build result on main
+        if: always()
         shell: pwsh
+        env:
+          JOB_STATUS: ${{ job.status }}
+          DEPENDENCIES_OUTCOME: ${{ steps.dependencies.outcome }}
+          TESTS_OUTCOME: ${{ steps.tests.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          ARTIFACT_OUTCOME: ${{ steps.artifact.outcome }}
+          RELEASE_OUTCOME: ${{ steps.release.outcome }}
         run: |
           $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
+          $download = if ($env:RELEASE_OUTCOME -eq "success") {
+            "https://github.com/nandurpm/Serial_Communication/releases/download/windows-latest/SerialCommunicationMonitor-Windows-x64.zip"
+          } else {
+            "Not published because the build did not complete successfully."
+          }
+
           @"
           # Windows Portable Build Status
 
-          **Status:** Successful
+          **Status:** $env:JOB_STATUS
 
-          - Built at: $builtAt
-          - Source commit: `${{ github.sha }}`
+          - Checked at: $builtAt
+          - Source commit: ${{ github.sha }}
           - Platform: Windows x64
-          - Tests: Passed
-          - EXE startup smoke test: Passed
-          - Download: https://github.com/nandurpm/Serial_Communication/releases/download/windows-latest/SerialCommunicationMonitor-Windows-x64.zip
+          - Dependencies: $env:DEPENDENCIES_OUTCOME
+          - Protocol tests: $env:TESTS_OUTCOME
+          - PyInstaller build: $env:BUILD_OUTCOME
+          - EXE startup smoke test: $env:SMOKE_OUTCOME
+          - ZIP packaging: $env:PACKAGE_OUTCOME
+          - Artifact upload: $env:ARTIFACT_OUTCOME
+          - Release publication: $env:RELEASE_OUTCOME
+          - Download: $download
 
-          Extract the ZIP and run `SerialCommunicationMonitor.exe`. Python is not required.
+          A successful build produces `SerialCommunicationMonitor.exe` inside the ZIP. Python is not required.
           "@ | Set-Content -Path "..\WINDOWS_PORTABLE_BUILD.md" -Encoding UTF8
 
           git config user.name "github-actions[bot]"
