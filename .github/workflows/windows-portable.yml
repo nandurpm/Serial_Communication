@@ -1,0 +1,128 @@
+name: Windows Portable EXE
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "serial_monitor_app/**"
+      - ".github/workflows/windows-portable.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-portable:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: serial_monitor_app
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            serial_monitor_app/requirements.txt
+            serial_monitor_app/requirements-build.txt
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-build.txt
+
+      - name: Run protocol tests
+        run: pytest -q
+
+      - name: Build portable executable
+        shell: pwsh
+        run: |
+          pyinstaller `
+            --noconfirm `
+            --clean `
+            --onefile `
+            --windowed `
+            --name SerialCommunicationMonitor `
+            --version-file windows_version_info.txt `
+            --add-data "config;config" `
+            --hidden-import serial.tools.list_ports `
+            app_gui.py
+
+      - name: Verify executable starts
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path ".\dist\SerialCommunicationMonitor.exe"
+          $process = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 5
+          $process.Refresh()
+          if ($process.HasExited) {
+            throw "The Windows executable exited during the startup smoke test."
+          }
+          Stop-Process -Id $process.Id -Force
+
+      - name: Create portable ZIP
+        shell: pwsh
+        run: |
+          $packageRoot = "package\SerialCommunicationMonitor-Windows-x64"
+          New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+          Copy-Item ".\dist\SerialCommunicationMonitor.exe" "$packageRoot\SerialCommunicationMonitor.exe"
+          Copy-Item ".\README.md" "$packageRoot\README.md"
+          Copy-Item "..\LICENSE" "$packageRoot\LICENSE.txt"
+
+          @"
+          SERIAL COMMUNICATION MONITOR - WINDOWS PORTABLE
+          =================================================
+
+          1. Extract this ZIP to a normal writable folder.
+          2. Connect the USB-to-RS485 or USB-to-serial converter.
+          3. Double-click SerialCommunicationMonitor.exe.
+          4. Select the COM port, baudrate and Modbus slave ID.
+          5. Start with read-only register monitoring.
+
+          Python installation is not required.
+
+          Windows may require the correct FTDI, CH340/CH341, CP210x or Prolific
+          driver for the USB converter. An unsigned executable may show a
+          Microsoft Defender SmartScreen warning.
+
+          SAFETY WARNING:
+          Register writes can alter connected controller behaviour. Verify the
+          manufacturer's register map and permitted machine state before writing.
+          This application is not a certified escalator safety controller or
+          safety test instrument.
+          "@ | Set-Content -Path "$packageRoot\START_HERE.txt" -Encoding UTF8
+
+          Compress-Archive `
+            -Path "$packageRoot\*" `
+            -DestinationPath ".\SerialCommunicationMonitor-Windows-x64.zip" `
+            -Force
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SerialCommunicationMonitor-Windows-x64
+          path: serial_monitor_app/SerialCommunicationMonitor-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Publish rolling Windows release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view windows-latest *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete windows-latest --yes --cleanup-tag
+          }
+
+          gh release create windows-latest `
+            ".\SerialCommunicationMonitor-Windows-x64.zip" `
+            --target "${{ github.sha }}" `
+            --title "Windows Portable App - Latest" `
+            --notes "Ready-to-use Windows x64 portable build. Extract the ZIP and run SerialCommunicationMonitor.exe. Python is not required. This unsigned engineering utility must be tested with the intended serial converter and controller before field use." `
+            --prerelease
