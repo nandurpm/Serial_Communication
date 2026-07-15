@@ -25,6 +25,7 @@ jobs:
             serial_monitor_app/requirements-dev.txt
       - run: python -m pip install --upgrade pip
       - run: pip install -r requirements-dev.txt
+      - run: pip install -e .
       - name: Run pytest
         shell: bash
         run: |
