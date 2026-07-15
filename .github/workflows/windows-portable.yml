@@ -131,3 +131,31 @@ jobs:
             --title "Windows Portable App - Latest" `
             --notes "Ready-to-use Windows x64 portable build. Extract the ZIP and run SerialCommunicationMonitor.exe. Python is not required. This unsigned engineering utility must be tested with the intended serial converter and controller before field use." `
             --prerelease
+
+      - name: Record successful build on main
+        shell: pwsh
+        run: |
+          $builtAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'")
+          @"
+          # Windows Portable Build Status
+
+          **Status:** Successful
+
+          - Built at: $builtAt
+          - Source commit: `${{ github.sha }}`
+          - Platform: Windows x64
+          - Tests: Passed
+          - EXE startup smoke test: Passed
+          - Download: https://github.com/nandurpm/Serial_Communication/releases/download/windows-latest/SerialCommunicationMonitor-Windows-x64.zip
+
+          Extract the ZIP and run `SerialCommunicationMonitor.exe`. Python is not required.
+          "@ | Set-Content -Path "..\WINDOWS_PORTABLE_BUILD.md" -Encoding UTF8
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "..\WINDOWS_PORTABLE_BUILD.md"
+          git diff --cached --quiet
+          if ($LASTEXITCODE -ne 0) {
+            git commit -m "Update Windows portable build status [skip ci]"
+            git push origin HEAD:main
+          }
