@@ -1,223 +1,189 @@
 #!/usr/bin/env python3
-"""
-Command-Line Interface Application
-CLI for serial communication monitoring and control.
-"""
+"""Command-line interface for Modbus RTU serial monitoring."""
+
+from __future__ import annotations
 
 import argparse
+import csv
+import json
 import sys
 import time
-import json
-from typing import List, Optional
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from core.serial_handler import SerialPortHandler, SerialPortFinder
 from core.modbus_protocol import ModbusRTU
-from core.data_mapper import DataMapper, AddressMap, DataType
-from core.storage import FileStorage, DatabaseStorage
-from core.utils import format_hex, format_ascii, setup_logging
+from core.serial_handler import SerialPortFinder, SerialPortHandler
+from core.utils import setup_logging
 
 setup_logging()
 
 
 class SerialMonitorCLI:
-    """Command-line interface for serial monitoring."""
+    def __init__(self) -> None:
+        self.serial_handler: Optional[SerialPortHandler] = None
+        self.modbus: Optional[ModbusRTU] = None
 
-    def __init__(self):
-        self.serial_handler = None
-        self.modbus = None
-        self.mapper = DataMapper()
-        self.storage = FileStorage()
-        self.db_storage = DatabaseStorage()
-
-    def list_ports(self):
-        """List available serial ports."""
-        finder = SerialPortFinder()
-        ports = finder.list_ports()
-        print("\nAvailable Serial Ports:")
-        for port in ports:
-            print(f"  {port['port']}: {port['description']}")
+    def list_ports(self) -> int:
+        ports = SerialPortFinder.list_ports()
         if not ports:
-            print("  No ports found")
+            print("No serial ports found")
+            return 1
+        print(f"{'Port':<22} {'Description':<36} Manufacturer")
+        print("-" * 85)
+        for item in ports:
+            print(f"{item['port']:<22} {item['description']:<36} {item['manufacturer']}")
+        return 0
 
-    def connect(self, port: str, baudrate: int = 9600):
-        """Connect to serial port."""
-        try:
-            self.serial_handler = SerialPortHandler(port, baudrate)
-            if self.serial_handler.connect():
-                self.modbus = ModbusRTU(self.serial_handler)
-                print(f"✓ Connected to {port} at {baudrate} baud")
-                return True
-        except Exception as e:
-            print(f"✗ Connection failed: {e}")
-        return False
+    def connect(self, port: str, baudrate: int, slave_id: int) -> None:
+        if not port:
+            raise ValueError("--port is required for this command")
+        handler = SerialPortHandler(port, baudrate)
+        if not handler.connect():
+            raise RuntimeError(f"Unable to open {port}. Check the cable and dialout permission.")
+        self.serial_handler = handler
+        self.modbus = ModbusRTU(handler, slave_id=slave_id)
+        print(f"Connected to {port} at {baudrate} baud (slave {slave_id})", file=sys.stderr)
 
-    def disconnect(self):
-        """Disconnect from serial port."""
+    def disconnect(self) -> None:
         if self.serial_handler:
             self.serial_handler.disconnect()
-            print("✓ Disconnected")
+            print("Disconnected", file=sys.stderr)
+        self.serial_handler = None
+        self.modbus = None
 
-    def read_holding_registers(self, start: int, count: int):
-        """Read holding registers."""
+    def read_holding_registers(self, start: int, count: int) -> List[Dict[str, Any]]:
         if not self.modbus:
-            print("✗ Not connected")
-            return
+            raise RuntimeError("Not connected")
+        values = self.modbus.read_holding_registers(start, count)
+        if values is None:
+            raise RuntimeError("No valid Modbus response received")
+        timestamp = datetime.now().isoformat(timespec="seconds")
+        return [
+            {
+                "address": start + index,
+                "hex": f"0x{value:04X}",
+                "unsigned": value,
+                "signed": value if value < 32768 else value - 65536,
+                "timestamp": timestamp,
+            }
+            for index, value in enumerate(values)
+        ]
 
-        data = self.modbus.read_holding_registers(start, count)
-        if data:
-            print(f"\nRegisters {start}-{start + count - 1}:")
-            print(f"{'Index':<10} {'Address':<12} {'Hex':<8} {'Dec':<10} {'Signed'}")
-            print("-" * 50)
-            for i, value in enumerate(data):
-                address = start + i
-                signed = value if value < 32768 else value - 65536
-                print(f"{i:<10} {address:<12} {value:04X}     {value:<10} {signed}")
+    @staticmethod
+    def print_records(records: List[Dict[str, Any]]) -> None:
+        print(f"{'Address':<10} {'Hex':<10} {'Unsigned':<12} {'Signed':<12} Timestamp")
+        print("-" * 74)
+        for item in records:
+            print(
+                f"{item['address']:<10} {item['hex']:<10} "
+                f"{item['unsigned']:<12} {item['signed']:<12} {item['timestamp']}"
+            )
+
+    @staticmethod
+    def save_records(path: str, records: List[Dict[str, Any]]) -> None:
+        output = Path(path)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if output.suffix.lower() == ".json":
+            output.write_text(json.dumps(records, indent=2), encoding="utf-8")
+        elif output.suffix.lower() == ".csv":
+            with output.open("w", newline="", encoding="utf-8") as file:
+                writer = csv.DictWriter(file, fieldnames=records[0].keys())
+                writer.writeheader()
+                writer.writerows(records)
         else:
-            print("✗ Failed to read registers")
+            raise ValueError("Output filename must end in .csv or .json")
+        print(f"Saved {len(records)} record(s) to {output}", file=sys.stderr)
 
-    def write_register(self, address: int, value: int):
-        """Write single register."""
+    def write_register(self, address: int, value: int) -> None:
         if not self.modbus:
-            print("✗ Not connected")
-            return
+            raise RuntimeError("Not connected")
+        if not self.modbus.write_single_register(address, value):
+            raise RuntimeError("Write was not acknowledged by the Modbus device")
+        print(f"Wrote {value} to holding register {address}")
 
-        if self.modbus.write_single_register(address, value):
-            print(f"✓ Written {value} to register {address}")
-        else:
-            print(f"✗ Failed to write to register {address}")
-
-    def scan_device(self, start: int = 0, end: int = 100, interval: float = 1.0):
-        """Continuous device scan."""
-        if not self.modbus:
-            print("✗ Not connected")
-            return
-
-        print(f"Starting scan from {start} to {end}")
-        print("Press Ctrl+C to stop\n")
-
+    def scan(self, start: int, count: int, interval: float, output: Optional[str]) -> None:
+        if interval < 0.05:
+            raise ValueError("Scan interval must be at least 0.05 seconds")
+        captured: List[Dict[str, Any]] = []
+        print("Press Ctrl+C to stop", file=sys.stderr)
         try:
             while True:
-                data = self.modbus.read_holding_registers(start, end - start + 1)
-                if data:
-                    timestamp = time.strftime("%H:%M:%S")
-                    print(f"[{timestamp}]", end=" ")
-                    print(" ".join(f"{v:04X}" for v in data[:10]), end="")
-                    if len(data) > 10:
-                        print(f" ... ({len(data)} total)", end="")
-                    print()
+                records = self.read_holding_registers(start, count)
+                self.print_records(records)
+                print()
+                captured.extend(records)
                 time.sleep(interval)
         except KeyboardInterrupt:
-            print("\n✓ Scan stopped")
+            print("Scan stopped", file=sys.stderr)
+        finally:
+            if output and captured:
+                self.save_records(output, captured)
 
-    def export_data(self, format: str = "json"):
-        """Export data to file."""
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        filename = f"export_{timestamp}.{format}"
-
-        if format == "json":
-            self.storage.save_json(filename, {})
-        elif format == "csv":
-            self.storage.save_csv(filename, [])
-
-        print(f"✓ Data exported to {filename}")
-
-    def show_stats(self):
-        """Show communication statistics."""
+    def show_stats(self) -> None:
         if not self.serial_handler:
-            print("✗ Not connected")
-            return
-
+            raise RuntimeError("Not connected")
         stats = self.serial_handler.get_stats()
-        print("\nCommunication Statistics:")
-        print(f"  Bytes Sent:      {stats['bytes_sent']}")
-        print(f"  Bytes Received:  {stats['bytes_received']}")
-        print(f"  Packets Sent:    {stats['packets_sent']}")
-        print(f"  Packets Received: {stats['packets_received']}")
-        print(f"  Errors:          {stats['errors']}")
-        print(f"  Last RX:         {stats['last_rx_time']}")
-        print(f"  Last TX:         {stats['last_tx_time']}")
+        for key, value in stats.items():
+            print(f"{key}: {value}")
 
 
-def main():
-    """Main CLI entry point."""
-    parser = argparse.ArgumentParser(
-        description="Serial Communication Monitor - Linux",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s list-ports
-  %(prog)s -p /dev/ttyUSB0 -b 9600 read-registers 0 10
-  %(prog)s -p /dev/ttyUSB0 -b 9600 scan -s 0 -e 50
-        """
-    )
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Serial Communication Monitor (Modbus RTU)")
+    parser.add_argument("-p", "--port", help="Serial port, for example /dev/ttyUSB0")
+    parser.add_argument("-b", "--baudrate", type=int, default=9600)
+    parser.add_argument("--slave-id", type=int, default=1, help="Modbus slave ID (1-247)")
+    subparsers = parser.add_subparsers(dest="command", required=True)
 
-    parser.add_argument(
-        "-p", "--port",
-        help="Serial port (e.g., /dev/ttyUSB0)"
-    )
-    parser.add_argument(
-        "-b", "--baudrate",
-        type=int,
-        default=9600,
-        help="Baudrate (default: 9600)"
-    )
+    subparsers.add_parser("list-ports", help="List detected serial ports")
 
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
-
-    # list-ports command
-    subparsers.add_parser("list-ports", help="List available serial ports")
-
-    # read-registers command
     read_parser = subparsers.add_parser("read-registers", help="Read holding registers")
-    read_parser.add_argument("start", type=int, help="Start address")
-    read_parser.add_argument("count", type=int, help="Number of registers")
+    read_parser.add_argument("start", type=int)
+    read_parser.add_argument("count", type=int)
+    read_parser.add_argument("-o", "--output", help="Optional .csv or .json output file")
 
-    # write-register command
-    write_parser = subparsers.add_parser("write-register", help="Write single register")
-    write_parser.add_argument("address", type=int, help="Register address")
-    write_parser.add_argument("value", type=int, help="Value to write")
+    write_parser = subparsers.add_parser("write-register", help="Write one holding register")
+    write_parser.add_argument("address", type=int)
+    write_parser.add_argument("value", type=int)
 
-    # scan command
-    scan_parser = subparsers.add_parser("scan", help="Continuous device scan")
-    scan_parser.add_argument("-s", "--start", type=int, default=0, help="Start address")
-    scan_parser.add_argument("-e", "--end", type=int, default=100, help="End address")
-    scan_parser.add_argument("-i", "--interval", type=float, default=1.0, help="Scan interval (seconds)")
+    scan_parser = subparsers.add_parser("scan", help="Continuously read holding registers")
+    scan_parser.add_argument("start", type=int)
+    scan_parser.add_argument("count", type=int)
+    scan_parser.add_argument("-i", "--interval", type=float, default=1.0)
+    scan_parser.add_argument("-o", "--output", help="Save captured records on exit (.csv or .json)")
 
-    # export command
-    export_parser = subparsers.add_parser("export", help="Export data")
-    export_parser.add_argument("-f", "--format", choices=["json", "csv"], default="json")
+    subparsers.add_parser("stats", help="Show connection statistics")
+    return parser
 
-    # stats command
-    subparsers.add_parser("stats", help="Show communication statistics")
 
+def main() -> int:
+    parser = build_parser()
     args = parser.parse_args()
-
     cli = SerialMonitorCLI()
 
-    # Execute commands
     if args.command == "list-ports":
-        cli.list_ports()
-    elif args.command == "read-registers":
-        if cli.connect(args.port, args.baudrate):
-            cli.read_holding_registers(args.start, args.count)
-            cli.disconnect()
-    elif args.command == "write-register":
-        if cli.connect(args.port, args.baudrate):
+        return cli.list_ports()
+
+    try:
+        cli.connect(args.port, args.baudrate, args.slave_id)
+        if args.command == "read-registers":
+            records = cli.read_holding_registers(args.start, args.count)
+            cli.print_records(records)
+            if args.output:
+                cli.save_records(args.output, records)
+        elif args.command == "write-register":
             cli.write_register(args.address, args.value)
-            cli.disconnect()
-    elif args.command == "scan":
-        if cli.connect(args.port, args.baudrate):
-            cli.scan_device(args.start, args.end, args.interval)
-            cli.disconnect()
-    elif args.command == "export":
-        cli.export_data(args.format)
-    elif args.command == "stats":
-        if cli.connect(args.port, args.baudrate):
+        elif args.command == "scan":
+            cli.scan(args.start, args.count, args.interval, args.output)
+        elif args.command == "stats":
             cli.show_stats()
-            cli.disconnect()
-    else:
-        parser.print_help()
+        return 0
+    except (ValueError, RuntimeError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        cli.disconnect()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
