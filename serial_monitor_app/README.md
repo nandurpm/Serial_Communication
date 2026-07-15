@@ -1,10 +1,10 @@
-# Serial Communication Monitor for Linux
+# Serial Communication Monitor for Linux and Windows
 
 A Python application for communicating with serial devices and monitoring **Modbus RTU** registers. It includes a Tkinter desktop GUI, command-line interface, and a REST API intended for local engineering and test use.
 
 ## Implemented features
 
-- Linux serial-port discovery using `pyserial`
+- Linux and Windows serial-port discovery using `pyserial`
 - Modbus RTU CRC validation and exception handling
 - Holding-register and input-register reads
 - Coil reads
@@ -18,7 +18,24 @@ A Python application for communicating with serial devices and monitoring **Modb
 
 ## Not implemented
 
-The project does **not** currently implement Modbus TCP, charts, scripting, arbitrary generic-serial terminal mode, or simultaneous multi-device monitoring in the GUI. The previous README advertised features and files that did not exist.
+The project does **not** currently implement Modbus TCP, charts, scripting, arbitrary generic-serial terminal mode, or simultaneous multi-device monitoring in the GUI. Earlier documentation incorrectly claimed those features existed.
+
+## Windows portable application
+
+A ready-to-use Windows x64 ZIP is built automatically from the `main` branch.
+
+Download it from the repository's **Releases** page:
+
+1. Open the latest prerelease named **Windows Portable App - Latest**.
+2. Download `SerialCommunicationMonitor-Windows-x64.zip`.
+3. Extract the ZIP to a normal writable folder.
+4. Double-click `SerialCommunicationMonitor.exe`.
+
+Python installation is not required. The ZIP also contains `START_HERE.txt`, this README, and the MIT license.
+
+Windows may require the correct USB converter driver, such as FTDI, CH340/CH341, CP210x, or Prolific. Because the executable is not code-signed, Microsoft Defender SmartScreen may display a warning.
+
+The executable is rebuilt by `.github/workflows/windows-portable.yml`. The workflow runs protocol tests, builds with PyInstaller, verifies that the executable remains running during startup, uploads a 90-day workflow artifact, and replaces the rolling `windows-latest` prerelease.
 
 ## Linux installation
 
@@ -44,7 +61,7 @@ sudo usermod -aG dialout "$USER"
 
 Log out and log back in after running that command. Do not run the application permanently with `sudo` just to access `/dev/ttyUSB*`.
 
-## Run
+## Run from source
 
 ### GUI
 
@@ -77,7 +94,7 @@ Do not expose the API to an untrusted network. It can write values to connected 
 
 ## GUI workflow
 
-1. Connect the USB-to-serial converter.
+1. Connect the USB-to-RS485 or USB-to-serial converter.
 2. Select the detected port, baudrate, and Modbus slave ID.
 3. Click **Connect**.
 4. Enter the first register address and quantity.
