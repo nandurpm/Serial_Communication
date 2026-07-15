@@ -1,201 +1,223 @@
 #!/usr/bin/env python3
-"""
-Serial Port Handler Module
-Manages serial port operations with error handling and connection management.
-"""
+"""Thread-safe serial port discovery and communication helpers."""
+
+from __future__ import annotations
+
+import logging
+import queue
+import threading
+import time
+from datetime import datetime
+from typing import Callable, List, Optional
 
 import serial
-import threading
-import queue
-import logging
-from typing import Optional, Callable, List
-from datetime import datetime
-import time
+from serial.tools import list_ports
 
 logger = logging.getLogger(__name__)
 
 
 class SerialPortHandler:
-    """Handles serial port communication with thread-safe operations."""
+    """Handle one serial connection with background receive buffering."""
 
     def __init__(
         self,
         port: str,
         baudrate: int = 9600,
-        parity: str = 'N',
+        parity: str = "N",
         stopbits: int = 1,
         timeout: float = 1.0,
-        rx_callback: Optional[Callable] = None
-    ):
-        """
-        Initialize serial port handler.
+        rx_callback: Optional[Callable[[bytes], None]] = None,
+    ) -> None:
+        if not port:
+            raise ValueError("A serial port is required")
+        if int(baudrate) <= 0:
+            raise ValueError("Baudrate must be greater than zero")
 
-        Args:
-            port: Serial port path (e.g., '/dev/ttyUSB0')
-            baudrate: Communication speed (default: 9600)
-            parity: Parity bit (N/E/O)
-            stopbits: Stop bits (1/2)
-            timeout: Read timeout in seconds
-            rx_callback: Callback function for received data
-        """
         self.port = port
-        self.baudrate = baudrate
-        self.parity = parity
+        self.baudrate = int(baudrate)
+        self.parity = parity.upper()
         self.stopbits = stopbits
-        self.timeout = timeout
+        self.timeout = float(timeout)
         self.rx_callback = rx_callback
 
-        self.serial = None
+        self.serial: Optional[serial.Serial] = None
         self.is_connected = False
-        self.rx_queue = queue.Queue()
-        self.tx_queue = queue.Queue()
-        self.rx_thread = None
-        self.tx_thread = None
         self.running = False
+        self.rx_queue: queue.Queue[bytes] = queue.Queue(maxsize=1000)
+        self.rx_thread: Optional[threading.Thread] = None
+        self._write_lock = threading.Lock()
+        self._state_lock = threading.Lock()
 
-        # Statistics
         self.stats = {
-            'bytes_sent': 0,
-            'bytes_received': 0,
-            'packets_sent': 0,
-            'packets_received': 0,
-            'errors': 0,
-            'last_rx_time': None,
-            'last_tx_time': None
+            "bytes_sent": 0,
+            "bytes_received": 0,
+            "packets_sent": 0,
+            "packets_received": 0,
+            "errors": 0,
+            "last_rx_time": None,
+            "last_tx_time": None,
         }
 
     def connect(self) -> bool:
-        """Establish serial connection."""
-        try:
-            self.serial = serial.Serial(
-                port=self.port,
-                baudrate=self.baudrate,
-                parity=self.parity,
-                stopbits=self.stopbits,
-                timeout=self.timeout
-            )
-            self.is_connected = True
-            self.running = True
+        """Open the configured port and start the receiver thread."""
+        with self._state_lock:
+            if self.is_connected and self.serial and self.serial.is_open:
+                return True
+            try:
+                self.serial = serial.Serial(
+                    port=self.port,
+                    baudrate=self.baudrate,
+                    parity=self.parity,
+                    stopbits=self.stopbits,
+                    timeout=0.05,
+                    write_timeout=max(self.timeout, 0.1),
+                )
+                self.serial.reset_input_buffer()
+                self.serial.reset_output_buffer()
+                self.running = True
+                self.is_connected = True
+                self.rx_thread = threading.Thread(
+                    target=self._receiver_thread,
+                    name=f"serial-rx-{self.port}",
+                    daemon=True,
+                )
+                self.rx_thread.start()
+                logger.info("Connected to %s at %s baud", self.port, self.baudrate)
+                return True
+            except (serial.SerialException, ValueError, OSError) as exc:
+                logger.error("Failed to connect to %s: %s", self.port, exc)
+                self.serial = None
+                self.running = False
+                self.is_connected = False
+                return False
 
-            # Start receiver thread
-            self.rx_thread = threading.Thread(target=self._receiver_thread, daemon=True)
-            self.rx_thread.start()
+    def disconnect(self) -> None:
+        """Stop background work and close the serial port cleanly."""
+        with self._state_lock:
+            self.running = False
+            serial_obj = self.serial
 
-            # Start transmitter thread
-            self.tx_thread = threading.Thread(target=self._transmitter_thread, daemon=True)
-            self.tx_thread.start()
+        if self.rx_thread and self.rx_thread.is_alive():
+            self.rx_thread.join(timeout=1.0)
 
-            logger.info(f"Connected to {self.port} at {self.baudrate} baud")
-            return True
-        except serial.SerialException as e:
-            logger.error(f"Failed to connect to {self.port}: {e}")
+        with self._state_lock:
+            if serial_obj and serial_obj.is_open:
+                try:
+                    serial_obj.close()
+                except serial.SerialException as exc:
+                    logger.warning("Error while closing %s: %s", self.port, exc)
+            self.serial = None
             self.is_connected = False
-            return False
-
-    def disconnect(self):
-        """Close serial connection."""
-        self.running = False
-        if self.serial and self.serial.is_open:
-            self.serial.close()
-        self.is_connected = False
-        logger.info(f"Disconnected from {self.port}")
+            self.rx_thread = None
+        logger.info("Disconnected from %s", self.port)
 
     def write(self, data: bytes) -> bool:
-        """Queue data for transmission."""
-        if not self.is_connected:
+        """Write bytes synchronously so callers can safely wait for a reply."""
+        if not isinstance(data, (bytes, bytearray)) or not data:
+            raise ValueError("data must be non-empty bytes")
+        if not self.is_connected or not self.serial or not self.serial.is_open:
             logger.warning("Cannot write: not connected")
             return False
+
         try:
-            self.tx_queue.put(data, timeout=1)
+            with self._write_lock:
+                written = self.serial.write(bytes(data))
+                self.serial.flush()
+            if written != len(data):
+                logger.error("Partial serial write: %s of %s bytes", written, len(data))
+                self.stats["errors"] += 1
+                return False
+            self.stats["bytes_sent"] += written
+            self.stats["packets_sent"] += 1
+            self.stats["last_tx_time"] = datetime.now()
             return True
-        except queue.Full:
-            logger.error("TX queue full")
+        except (serial.SerialException, OSError) as exc:
+            logger.error("Serial write failed: %s", exc)
+            self.stats["errors"] += 1
             return False
 
-    def read(self, size: int = 1024, timeout: float = None) -> Optional[bytes]:
-        """Read data from RX queue."""
+    def read(self, size: int = 1024, timeout: Optional[float] = None) -> Optional[bytes]:
+        """Return the next received chunk from the background queue."""
+        del size
         try:
             return self.rx_queue.get(timeout=timeout)
         except queue.Empty:
             return None
 
-    def _receiver_thread(self):
-        """Background thread for receiving data."""
-        while self.running:
+    def discard_input(self) -> None:
+        """Discard queued and operating-system buffered receive data."""
+        while True:
             try:
-                if self.serial.in_waiting > 0:
-                    data = self.serial.read(self.serial.in_waiting)
-                    if data:
-                        self.rx_queue.put(data)
-                        self.stats['bytes_received'] += len(data)
-                        self.stats['packets_received'] += 1
-                        self.stats['last_rx_time'] = datetime.now()
-
-                        if self.rx_callback:
-                            self.rx_callback(data)
-                else:
-                    time.sleep(0.01)
-            except Exception as e:
-                logger.error(f"RX thread error: {e}")
-                self.stats['errors'] += 1
-                time.sleep(0.1)
-
-    def _transmitter_thread(self):
-        """Background thread for transmitting data."""
-        while self.running:
-            try:
-                data = self.tx_queue.get(timeout=0.1)
-                self.serial.write(data)
-                self.stats['bytes_sent'] += len(data)
-                self.stats['packets_sent'] += 1
-                self.stats['last_tx_time'] = datetime.now()
+                self.rx_queue.get_nowait()
             except queue.Empty:
-                continue
-            except Exception as e:
-                logger.error(f"TX thread error: {e}")
-                self.stats['errors'] += 1
+                break
+        if self.serial and self.serial.is_open:
+            try:
+                self.serial.reset_input_buffer()
+            except serial.SerialException as exc:
+                logger.warning("Unable to reset input buffer: %s", exc)
+
+    def clear_buffers(self) -> None:
+        """Clear receive and transmit buffers without replacing live queues."""
+        self.discard_input()
+        if self.serial and self.serial.is_open:
+            try:
+                self.serial.reset_output_buffer()
+            except serial.SerialException as exc:
+                logger.warning("Unable to reset output buffer: %s", exc)
+
+    def _receiver_thread(self) -> None:
+        """Continuously collect available bytes without blocking shutdown."""
+        while self.running:
+            serial_obj = self.serial
+            if not serial_obj or not serial_obj.is_open:
+                break
+            try:
+                waiting = serial_obj.in_waiting
+                data = serial_obj.read(waiting or 1)
+                if not data:
+                    continue
+                try:
+                    self.rx_queue.put(data, timeout=0.1)
+                except queue.Full:
+                    self.stats["errors"] += 1
+                    logger.error("RX queue full; dropping %s bytes", len(data))
+                    continue
+
+                self.stats["bytes_received"] += len(data)
+                self.stats["packets_received"] += 1
+                self.stats["last_rx_time"] = datetime.now()
+                if self.rx_callback:
+                    try:
+                        self.rx_callback(data)
+                    except Exception:
+                        logger.exception("Receive callback failed")
+            except (serial.SerialException, OSError) as exc:
+                if self.running:
+                    logger.error("RX thread error: %s", exc)
+                    self.stats["errors"] += 1
+                    time.sleep(0.05)
 
     def get_stats(self) -> dict:
-        """Get communication statistics."""
+        """Return a snapshot of communication counters."""
         return self.stats.copy()
-
-    def clear_buffers(self):
-        """Clear RX and TX buffers."""
-        self.rx_queue = queue.Queue()
-        self.tx_queue = queue.Queue()
-        if self.serial:
-            self.serial.reset_input_buffer()
-            self.serial.reset_output_buffer()
 
 
 class SerialPortFinder:
-    """Find available serial ports on Linux."""
+    """Discover serial ports without opening or locking them."""
 
     @staticmethod
     def list_ports() -> List[dict]:
-        """List all available serial ports."""
         ports = []
-        for i in range(10):
-            port = f"/dev/ttyUSB{i}"
-            try:
-                s = serial.Serial(port, timeout=0.1)
-                ports.append({
-                    'port': port,
-                    'description': f"USB Serial Device {i}"
-                })
-                s.close()
-            except:
-                pass
-
-        for i in range(10):
-            port = f"/dev/ttyACM{i}"
-            try:
-                s = serial.Serial(port, timeout=0.1)
-                ports.append({
-                    'port': port,
-                    'description': f"USB ACM Device {i}"
-                })
-                s.close()
-            except:
-                pass
+        for port in sorted(list_ports.comports(), key=lambda item: item.device):
+            ports.append(
+                {
+                    "port": port.device,
+                    "description": port.description or "Serial device",
+                    "manufacturer": port.manufacturer or "",
+                    "vid": port.vid,
+                    "pid": port.pid,
+                    "serial_number": port.serial_number or "",
+                }
+            )
         return ports
