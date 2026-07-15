@@ -1,152 +1,158 @@
-# Serial Communication Monitoring App (Linux)
+# Serial Communication Monitor for Linux
 
-A comprehensive serial communication monitoring application for Linux with real-time Modbus protocol support, address mapping, and data visualization.
+A Python application for communicating with serial devices and monitoring **Modbus RTU** registers. It includes a Tkinter desktop GUI, command-line interface, and a REST API intended for local engineering and test use.
 
-## Features
+## Implemented features
 
-### Core Features
-- **Multi-Protocol Support**: Modbus RTU, Modbus TCP, Generic Serial
-- **Real-Time Monitoring**: Live data capture and display
-- **Address Mapping**: Map RX values to registers and labels
-- **Data Visualization**: Charts and graphs for trend analysis
-- **Device Configuration**: Easy device setup and management
-- **Hex/ASCII Display**: Toggle between hex and ASCII representation
-- **Data Logging**: Export data to CSV/JSON
-- **Error Detection**: CRC validation and error reporting
+- Linux serial-port discovery using `pyserial`
+- Modbus RTU CRC validation and exception handling
+- Holding-register and input-register reads
+- Coil reads
+- Single and multiple holding-register writes
+- Handling of fragmented serial responses
+- Register labels, scale, offset, units, alarm flags, and statistics
+- GUI manual read and one-second auto scan
+- CSV and JSON export of captured values
+- SQLite history storage
+- REST endpoints for ports, connections, registers, mappings, history, and status
 
-### Advanced Features
-- **Multi-Device Support**: Monitor multiple devices simultaneously
-- **Alarm Management**: Set thresholds and alerts
-- **Statistics**: Real-time min/max/avg calculations
-- **Scripting**: Custom command sequences
-- **Database Integration**: Store historical data
-- **REST API**: Remote monitoring capabilities
+## Not implemented
 
-## Installation
+The project does **not** currently implement Modbus TCP, charts, scripting, arbitrary generic-serial terminal mode, or simultaneous multi-device monitoring in the GUI. The previous README advertised features and files that did not exist.
 
-### Prerequisites
+## Linux installation
+
 ```bash
-sudo apt-get update
-sudo apt-get install python3 python3-pip python3-tk
-sudo apt-get install libgpiod-dev
+sudo apt update
+sudo apt install python3 python3-venv python3-tk
+
+git clone https://github.com/nandurpm/Serial_Communication.git
+cd Serial_Communication/serial_monitor_app
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-### Setup
+### Serial-port permission
+
+On Debian, Ubuntu, and Linux Mint, add your user to the `dialout` group:
+
 ```bash
-cd serial_monitor_app
-pip3 install -r requirements.txt
+sudo usermod -aG dialout "$USER"
 ```
 
-## Quick Start
+Log out and log back in after running that command. Do not run the application permanently with `sudo` just to access `/dev/ttyUSB*`.
 
-### GUI Application
+## Run
+
+### GUI
+
 ```bash
-python3 app_gui.py
+python app_gui.py
 ```
 
-### CLI Application
+### CLI
+
 ```bash
-python3 app_cli.py
+python app_cli.py --help
 ```
 
-### API Server
+### REST API
+
 ```bash
-python3 app_api.py
+python app_api.py
 ```
 
-## Directory Structure
+The API binds to `127.0.0.1:5000` by default. Configuration variables:
 
-```
-serial_monitor_app/
-├── app_gui.py                 # Main GUI application (Tkinter)
-├── app_cli.py                 # Command-line interface
-├── app_api.py                 # REST API server
-├── core/
-│   ├── serial_handler.py      # Serial port management
-│   ├── modbus_protocol.py     # Modbus RTU/TCP implementation
-│   ├── data_mapper.py         # Address mapping engine
-│   ├── storage.py             # Database and file storage
-│   └── utils.py               # Utility functions
-├── ui/
-│   ├── main_window.py         # Main UI window
-│   ├── device_panel.py        # Device configuration
-│   ├── monitor_panel.py       # Real-time monitoring
-│   ├── chart_panel.py         # Data visualization
-│   └── styles.py              # UI themes
-├── config/
-│   ├── default_config.json    # Default configuration
-│   ├── devices.json           # Device definitions
-│   └── mappings.json          # Address mappings
-├── tests/
-│   ├── test_serial.py
-│   ├── test_modbus.py
-│   └── test_mapper.py
-├── requirements.txt
-└── setup.py
+```bash
+export SERIAL_MONITOR_HOST=127.0.0.1
+export SERIAL_MONITOR_PORT=5000
+export SERIAL_MONITOR_DEBUG=0
+export SERIAL_MONITOR_CORS_ORIGINS=http://localhost:3000
 ```
 
-## Configuration
+Do not expose the API to an untrusted network. It can write values to connected control equipment.
 
-### Device Configuration (devices.json)
-```json
-{
-  "devices": [
-    {
-      "id": "device_1",
-      "name": "PLC-01",
-      "type": "modbus_rtu",
-      "port": "/dev/ttyUSB0",
-      "baudrate": 9600,
-      "parity": "N",
-      "stopbits": 1,
-      "slave_id": 1
-    }
-  ]
-}
-```
+## GUI workflow
 
-### Address Mapping (mappings.json)
+1. Connect the USB-to-serial converter.
+2. Select the detected port, baudrate, and Modbus slave ID.
+3. Click **Connect**.
+4. Enter the first register address and quantity.
+5. Click **Read** or **Start Auto Scan**.
+6. Add mappings for engineering labels, scaling, offset, and units.
+7. Export captured records from the **Data Log** tab.
+
+Unmapped registers are still displayed with their raw values.
+
+## Mapping configuration
+
+`config/mappings.json` uses numeric register addresses:
+
 ```json
 {
   "mappings": [
     {
       "device_id": "device_1",
-      "address": "holding_register_0",
-      "label": "Temperature Sensor",
+      "address": 0,
+      "label": "Drive temperature",
       "data_type": "int16",
       "scale": 0.1,
-      "offset": -40,
+      "offset": 0,
       "unit": "°C",
-      "description": "Main temperature reading"
+      "alarm_threshold": 80
     }
   ]
 }
 ```
 
-## Usage Examples
+## REST examples
 
-### Python API
-```python
-from core.serial_handler import SerialPortHandler
-from core.modbus_protocol import ModbusRTU
+List ports:
 
-# Initialize serial handler
-handler = SerialPortHandler('/dev/ttyUSB0', 9600)
-
-# Initialize Modbus
-modbus = ModbusRTU(handler, slave_id=1)
-
-# Read holding registers
-data = modbus.read_holding_registers(0, 10)
+```bash
+curl http://127.0.0.1:5000/api/ports
 ```
 
-## Support & Documentation
+Connect:
 
-- **User Guide**: See `docs/user_guide.md`
-- **API Reference**: See `docs/api_reference.md`
-- **Examples**: See `examples/` directory
-- **Issues**: Report on GitHub Issues
+```bash
+curl -X POST http://127.0.0.1:5000/api/connections \
+  -H 'Content-Type: application/json' \
+  -d '{"device_id":"escalator_controller","port":"/dev/ttyUSB0","baudrate":9600,"slave_id":1}'
+```
 
-## License
+Read ten holding registers:
 
-MIT License
+```bash
+curl 'http://127.0.0.1:5000/api/registers?device_id=escalator_controller&start=0&count=10'
+```
+
+Write one holding register:
+
+```bash
+curl -X POST http://127.0.0.1:5000/api/registers \
+  -H 'Content-Type: application/json' \
+  -d '{"device_id":"escalator_controller","address":10,"value":1}'
+```
+
+Disconnect:
+
+```bash
+curl -X DELETE 'http://127.0.0.1:5000/api/connections?device_id=escalator_controller'
+```
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
+
+The protocol tests use a fake serial handler, so they do not require connected hardware.
+
+## Engineering warning
+
+Register writes can change controller behavior. Verify the device register map, slave ID, baudrate, parity, stop bits, and permitted operating state before writing. This software is not a certified escalator safety controller or safety test instrument.
