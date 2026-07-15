@@ -11,7 +11,7 @@ setup(
     name="serial-monitor",
     version="1.1.0",
     author="Nandakumar M",
-    description="Linux serial communication and Modbus RTU monitoring application",
+    description="Cross-platform serial communication and Modbus RTU monitoring application",
     long_description=(BASE_DIR / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
     py_modules=["app_gui", "app_cli", "app_api"],
@@ -20,6 +20,8 @@ setup(
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
+        "Operating System :: Microsoft :: Windows :: Windows 10",
+        "Operating System :: Microsoft :: Windows :: Windows 11",
         "Operating System :: POSIX :: Linux",
         "Topic :: System :: Monitoring",
     ],
@@ -33,6 +35,7 @@ setup(
     extras_require={
         "charts": ["matplotlib>=3.7,<4", "numpy>=1.24,<3", "pandas>=2,<3"],
         "dev": ["pytest>=7,<9", "black>=23,<26", "flake8>=6,<8"],
+        "build": ["pyinstaller==6.16.0"],
     },
     entry_points={
         "console_scripts": [
