@@ -167,6 +167,7 @@ jobs:
 
           - Checked at: $builtAt
           - Source commit: ${{ github.sha }}
+          - Workflow run ID: ${{ github.run_id }}
           - Platform: Windows x64
           - Dependencies: $env:DEPENDENCIES_OUTCOME
           - Protocol tests: $env:TESTS_OUTCOME
