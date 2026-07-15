@@ -1,0 +1,28 @@
+{
+  "devices": [
+    {
+      "id": "device_1",
+      "name": "PLC-01",
+      "description": "Main PLC Controller",
+      "type": "modbus_rtu",
+      "port": "/dev/ttyUSB0",
+      "baudrate": 9600,
+      "parity": "N",
+      "stopbits": 1,
+      "slave_id": 1,
+      "enabled": true
+    },
+    {
+      "id": "device_2",
+      "name": "Sensor-01",
+      "description": "Temperature Sensor Unit",
+      "type": "modbus_rtu",
+      "port": "/dev/ttyUSB1",
+      "baudrate": 19200,
+      "parity": "N",
+      "stopbits": 1,
+      "slave_id": 2,
+      "enabled": false
+    }
+  ]
+}
