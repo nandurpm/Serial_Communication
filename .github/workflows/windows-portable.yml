@@ -11,9 +11,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: windows-portable-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-windows-portable:
     runs-on: windows-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: serial_monitor_app
@@ -56,7 +61,7 @@ jobs:
       - name: Verify executable starts
         shell: pwsh
         run: |
-          $exe = Resolve-Path ".\dist\SerialCommunicationMonitor.exe"
+          $exe = (Resolve-Path ".\dist\SerialCommunicationMonitor.exe").Path
           $process = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 5
           $process.Refresh()
