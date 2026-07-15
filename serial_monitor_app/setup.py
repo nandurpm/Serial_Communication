@@ -1,41 +1,44 @@
 #!/usr/bin/env python3
-"""
-Setup script for Serial Communication Monitor
-"""
+"""Packaging configuration for Serial Communication Monitor."""
 
-from setuptools import setup, find_packages
+from pathlib import Path
 
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+from setuptools import find_packages, setup
+
+BASE_DIR = Path(__file__).resolve().parent
 
 setup(
     name="serial-monitor",
-    version="1.0.0",
-    author="Your Name",
-    description="Linux Serial Communication Monitoring Application",
-    long_description=long_description,
+    version="1.1.0",
+    author="Nandakumar M",
+    description="Linux serial communication and Modbus RTU monitoring application",
+    long_description=(BASE_DIR / "README.md").read_text(encoding="utf-8"),
     long_description_content_type="text/markdown",
+    py_modules=["app_gui", "app_cli", "app_api"],
     packages=find_packages(),
+    include_package_data=True,
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: POSIX :: Linux",
         "Topic :: System :: Monitoring",
     ],
-    python_requires=">=3.6",
+    python_requires=">=3.9",
     install_requires=[
-        "pyserial>=3.5",
-        "modbus-tk>=1.2.0",
-        "Flask>=2.3.0",
-        "numpy>=1.20",
-        "pandas>=1.0",
-        "matplotlib>=3.0",
+        "pyserial>=3.5,<4",
+        "Flask>=2.3,<4",
+        "Flask-Cors>=4,<7",
+        "Flask-RESTful>=0.3.10,<1",
     ],
+    extras_require={
+        "charts": ["matplotlib>=3.7,<4", "numpy>=1.24,<3", "pandas>=2,<3"],
+        "dev": ["pytest>=7,<9", "black>=23,<26", "flake8>=6,<8"],
+    },
     entry_points={
         "console_scripts": [
             "serial-monitor-gui=app_gui:main",
             "serial-monitor-cli=app_cli:main",
             "serial-monitor-api=app_api:main",
-        ],
+        ]
     },
 )
