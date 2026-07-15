@@ -287,7 +287,7 @@ class SerialMonitorApp:
                 data = modbus.read_holding_registers(start, quantity) if modbus else None
                 self.root.after(0, lambda: self._finish_read(data, start, None))
             except Exception as exc:
-                self.root.after(0, lambda: self._finish_read(None, start, exc))
+                self.root.after(0, lambda error=exc: self._finish_read(None, start, error))
 
         threading.Thread(target=worker, name="modbus-read", daemon=True).start()
 
